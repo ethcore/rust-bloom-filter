@@ -60,8 +60,8 @@ impl Bloom {
         }
     }
 
-    pub fn to_bytes(&self) -> Vec<u8> {
-        self.bitmap.to_bytes()
+    pub fn to_bytes(&self) -> (Vec<u8>, u32) {
+        (self.bitmap.to_bytes(), self.k_num)
     }
 
     /// Create a new bloom filter structure.
@@ -163,8 +163,7 @@ impl Bloom {
     }
 
     fn sip_new() -> SipHasher {
-        let mut rng = rand::thread_rng();
-        SipHasher::new_with_keys(rand::Rand::rand(&mut rng), rand::Rand::rand(&mut rng))
+        SipHasher::new()
     }
 }
 
@@ -193,4 +192,20 @@ fn bloom_test_clear() {
     assert!(bloom.check(&key) == true);
     bloom.clear();
     assert!(bloom.check(&key) == false);
+}
+
+#[test]
+fn bloom_recreate() {
+    let key: Vec<u8> = vec![0, 5, 8, 10];
+    let (bytes, k_num) = {
+        let mut bloom = Bloom::new(16, 1000);
+        bloom.set(&key);
+        assert!(bloom.check(&key));
+
+        bloom.to_bytes()
+    };
+    
+    let bloom = Bloom::from_bytes(&bytes, k_num);
+
+    assert!(bloom.check(&key));
 }
