@@ -47,6 +47,23 @@ impl Bloom {
         }
     }
 
+    pub fn from_bytes(bytes: &[u8], k_num: u32) -> Bloom {
+        let bitmap_size = bytes.len();
+        let bitmap_bits = (bitmap_size as u64) * 8u64;
+        let bitmap = BitVec::from_bytes(&bytes);
+        let sips = [Bloom::sip_new(), Bloom::sip_new()];
+        Bloom {
+            bitmap: bitmap,
+            bitmap_bits: bitmap_bits,
+            k_num: k_num,
+            sips: sips,
+        }
+    }
+
+    pub fn to_bytes(&self) -> Vec<u8> {
+        self.bitmap.to_bytes()
+    }
+
     /// Create a new bloom filter structure.
     /// items_count is an estimation of the maximum number of items to store.
     /// fp_p is the wanted rate of false positives, in ]0.0, 1.0[
