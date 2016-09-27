@@ -43,7 +43,6 @@ impl BitVecJournal {
 
     // set
     pub fn set(&mut self, index: usize) {
-        println!("set {}", index);
         let e_index = index / 64;
         let bit_index = index % 64;
         let val = self.elems.get_mut(e_index).unwrap();
