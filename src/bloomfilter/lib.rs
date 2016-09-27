@@ -15,13 +15,14 @@ extern crate rand;
 use std::cmp;
 use std::f64;
 use std::hash::{Hash, Hasher, SipHasher};
+use std::collections::HashSet;
 
 #[cfg(test)]
 use rand::Rng;
 
 struct BitVecJournal {
     elems: Vec<u64>,
-    journal:  Vec<usize>,
+    journal: HashSet<usize>,
 }
 
 impl BitVecJournal {
@@ -30,14 +31,14 @@ impl BitVecJournal {
         let extra = if size % 8 > 0  { 1 } else { 0 };
         BitVecJournal {
             elems: vec![0u64; size / 8 + extra],
-            journal: Vec::new(),
+            journal: HashSet::new(),
         }
     }
 
     pub fn from_parts(parts: &[u64]) -> BitVecJournal {
         BitVecJournal {
             elems: parts.to_vec(),
-            journal: Vec::new(),
+            journal: HashSet::new(),
         }
     }
 
@@ -47,7 +48,7 @@ impl BitVecJournal {
         let bit_index = index % 64;
         let val = self.elems.get_mut(e_index).unwrap();
         *val |= 1u64 << bit_index;
-        self.journal.push(e_index);
+        self.journal.insert(e_index);
     }
 
     pub fn get(&self, index: usize) -> bool {
@@ -58,7 +59,7 @@ impl BitVecJournal {
     }
 
     pub fn drain(&mut self) -> Vec<(usize, u64)> {
-        let journal = self.journal.drain(..).collect::<Vec<usize>>();
+        let journal = self.journal.drain().collect::<Vec<usize>>();
         journal.iter().map(|idx| (*idx, self.elems[*idx])).collect::<Vec<(usize, u64)>>()
     }
 }
@@ -211,5 +212,5 @@ fn bloom_journalling() {
     bloom.set(&vec![5u8, 4]);
     let drain = bloom.drain_journal();
 
-    assert_eq!(3, drain.entries.len())
+    assert_eq!(2, drain.entries.len())
 }
