@@ -62,6 +62,10 @@ impl BitVecJournal {
         let journal = self.journal.drain().collect::<Vec<usize>>();
         journal.iter().map(|idx| (*idx, self.elems[*idx])).collect::<Vec<(usize, u64)>>()
     }
+
+    pub fn how_full(&self) -> f64 {
+        self.elems.iter().fold(0u64, |acc, e| acc + e.count_ones() as u64) as f64 / (self.elems.len() * 64) as f64
+    }
 }
 
 /// Bloom filter structure
@@ -189,6 +193,10 @@ impl Bloom {
             hash_functions: self.k_num,
         }
     }
+
+    pub fn how_full(&self) -> f64 {
+        self.bitmap.how_full()
+    }
 }
 
 pub struct BloomJournal {
@@ -213,4 +221,16 @@ fn bloom_journalling() {
     let drain = bloom.drain_journal();
 
     assert_eq!(2, drain.entries.len())
+}
+
+
+#[test]
+fn bloom_howfull() {
+    let initial = vec![0u64; 8];
+    let mut bloom = Bloom::from_parts(&initial, 3);
+    bloom.set(&vec![5u8, 4]);
+
+    let full = bloom.how_full();
+    // 2/8/64 = 0.00390625
+    assert!(full >= 0.003f64 && full <= 0.004f64);
 }
