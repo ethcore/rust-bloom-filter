@@ -11,19 +11,62 @@
 #![warn(non_camel_case_types, non_upper_case_globals, unused_qualifications)]
 
 extern crate rand;
-extern crate bit_vec;
 
 use std::cmp;
 use std::f64;
 use std::hash::{Hash, Hasher, SipHasher};
-use bit_vec::BitVec;
 
 #[cfg(test)]
 use rand::Rng;
 
+struct BitVecJournal {
+    elems: Vec<u64>,
+    journal:  Vec<usize>,
+}
+
+impl BitVecJournal {
+    // size in bytes
+    pub fn new(size: usize) -> BitVecJournal {
+        let extra = if size % 8 > 0  { 1 } else { 0 };
+        BitVecJournal {
+            elems: vec![0u64; size / 8 + extra],
+            journal: Vec::new(),
+        }
+    }
+
+    pub fn from_parts(parts: &[u64]) -> BitVecJournal {
+        BitVecJournal {
+            elems: parts.to_vec(),
+            journal: Vec::new(),
+        }
+    }
+
+    // set
+    pub fn set(&mut self, index: usize) {
+        println!("set {}", index);
+        let e_index = index / 64;
+        let bit_index = index % 64;
+        let val = self.elems.get_mut(e_index).unwrap();
+        *val |= 1u64 << bit_index;
+        self.journal.push(e_index);
+    }
+
+    pub fn get(&self, index: usize) -> bool {
+        let e_index = index / 64;
+        let bit_index = index % 64;
+
+        self.elems[e_index] & (1 << bit_index) != 0
+    }
+
+    pub fn drain(&mut self) -> Vec<(usize, u64)> {
+        let journal = self.journal.drain(..).collect::<Vec<usize>>();
+        journal.iter().map(|idx| (*idx, self.elems[*idx])).collect::<Vec<(usize, u64)>>()
+    }
+}
+
 /// Bloom filter structure
 pub struct Bloom {
-    bitmap: BitVec,
+    bitmap: BitVecJournal,
     bitmap_bits: u64,
     k_num: u32,
     sips: [SipHasher; 2],
@@ -37,7 +80,7 @@ impl Bloom {
         assert!(bitmap_size > 0 && items_count > 0);
         let bitmap_bits = (bitmap_size as u64) * 8u64;
         let k_num = Bloom::optimal_k_num(bitmap_bits, items_count);
-        let bitmap = BitVec::from_elem(bitmap_bits as usize, false);
+        let bitmap = BitVecJournal::new(bitmap_bits as usize);
         let sips = [Bloom::sip_new(), Bloom::sip_new()];
         Bloom {
             bitmap: bitmap,
@@ -47,10 +90,10 @@ impl Bloom {
         }
     }
 
-    pub fn from_bytes(bytes: &[u8], k_num: u32) -> Bloom {
-        let bitmap_size = bytes.len();
+    pub fn from_parts(parts: &[u64], k_num: u32) -> Bloom {
+        let bitmap_size = parts.len()*8;
         let bitmap_bits = (bitmap_size as u64) * 8u64;
-        let bitmap = BitVec::from_bytes(&bytes);
+        let bitmap = BitVecJournal::from_parts(parts);
         let sips = [Bloom::sip_new(), Bloom::sip_new()];
         Bloom {
             bitmap: bitmap,
@@ -58,10 +101,6 @@ impl Bloom {
             k_num: k_num,
             sips: sips,
         }
-    }
-
-    pub fn to_bytes(&self) -> (Vec<u8>, u32) {
-        (self.bitmap.to_bytes(), self.k_num)
     }
 
     /// Create a new bloom filter structure.
@@ -90,7 +129,7 @@ impl Bloom {
         let mut hashes = [0u64, 0u64];
         for k_i in 0..self.k_num {
             let bit_offset = (self.bloom_hash(&mut hashes, &item, k_i) % self.bitmap_bits) as usize;
-            self.bitmap.set(bit_offset, true);
+            self.bitmap.set(bit_offset);
         }
     }
 
@@ -102,28 +141,11 @@ impl Bloom {
         let mut hashes = [0u64, 0u64];
         for k_i in 0..self.k_num {
             let bit_offset = (self.bloom_hash(&mut hashes, &item, k_i) % self.bitmap_bits) as usize;
-            if self.bitmap.get(bit_offset).unwrap() == false {
+            if !self.bitmap.get(bit_offset) {
                 return false;
             }
         }
         true
-    }
-
-    /// Record the presence of an item in the set,
-    /// and return the previous state of this item.
-    pub fn check_and_set<T>(&mut self, item: T) -> bool
-        where T: Hash
-    {
-        let mut hashes = [0u64, 0u64];
-        let mut found = true;
-        for k_i in 0..self.k_num {
-            let bit_offset = (self.bloom_hash(&mut hashes, &item, k_i) % self.bitmap_bits) as usize;
-            if self.bitmap.get(bit_offset).unwrap() == false {
-                found = false;
-                self.bitmap.set(bit_offset, true);
-            }
-        }
-        found
     }
 
     /// Return the number of bits in the filter
@@ -157,14 +179,21 @@ impl Bloom {
         }
     }
 
-    /// Clear all of the bits in the filter, removing all keys from the set
-    pub fn clear(&mut self) {
-        self.bitmap.clear()
-    }
-
     fn sip_new() -> SipHasher {
         SipHasher::new()
     }
+
+    pub fn drain_journal(&mut self) -> BloomJournal {
+        BloomJournal {
+            entries: self.bitmap.drain(),
+            hash_functions: self.k_num,
+        }
+    }
+}
+
+pub struct BloomJournal {
+    pub hash_functions: u32,
+    pub entries: Vec<(usize, u64)>,
 }
 
 #[test]
@@ -177,35 +206,11 @@ fn bloom_test_set() {
 }
 
 #[test]
-fn bloom_test_check_and_set() {
-    let mut bloom = Bloom::new(10, 80);
-    let key: &Vec<u8> = &rand::thread_rng().gen_iter::<u8>().take(16).collect();
-    assert!(bloom.check_and_set(key) == false);
-    assert!(bloom.check_and_set(key.clone()) == true);
-}
+fn bloom_journalling() {
+    let initial = vec![0u64; 8];
+    let mut bloom = Bloom::from_parts(&initial, 3);
+    bloom.set(&vec![5u8, 4]);
+    let drain = bloom.drain_journal();
 
-#[test]
-fn bloom_test_clear() {
-    let mut bloom = Bloom::new(10, 80);
-    let key: &Vec<u8> = &rand::thread_rng().gen_iter::<u8>().take(16).collect();
-    bloom.set(&key);
-    assert!(bloom.check(&key) == true);
-    bloom.clear();
-    assert!(bloom.check(&key) == false);
-}
-
-#[test]
-fn bloom_recreate() {
-    let key: Vec<u8> = vec![0, 5, 8, 10];
-    let (bytes, k_num) = {
-        let mut bloom = Bloom::new(16, 1000);
-        bloom.set(&key);
-        assert!(bloom.check(&key));
-
-        bloom.to_bytes()
-    };
-    
-    let bloom = Bloom::from_bytes(&bytes, k_num);
-
-    assert!(bloom.check(&key));
+    assert_eq!(3, drain.entries.len())
 }
